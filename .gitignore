@@ -1,0 +1,29 @@
+# Dependencies
+/vendor/
+/composer.lock
+
+# Cache and temp files
+*.cache
+*.log
+.phpunit.cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# WP-CLI package
+/wp-cli-ai-security.php
+
+# Package build
+dist/
+build/
+
+# Test coverage
+.coverage
+htmlcov/
