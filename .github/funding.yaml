@@ -1,18 +1,1 @@
-# GitHub Sponsors / Funding Configuration
-# https://github.com/sponsors/cbuntingde
-
-github:
-  - cbuntingde
-
-custom:
-  # Open Collective: Uncomment and replace with your Open Collective slug
-  # - opencollective.com/your-collective
-  
-  # Patreon: Uncomment and replace with your Patreon username
-  # - patreon.com/yourusername
-  
-  # Ko-fi: Uncomment and replace with your Ko-fi username
-  # - ko-fi.com/yourusername
-  
-  # Buy Me a Coffee: Uncomment and replace with your username
-  # - buymeacoffee.com/yourusername
+github: cbuntingde
