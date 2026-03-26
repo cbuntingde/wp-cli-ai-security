@@ -216,6 +216,19 @@ class Audit extends BaseCommand {
 	public function export( $args, $assoc_args ) {
 		list( $path ) = $args;
 
+		// Validate export path to prevent path traversal
+		$real_path = realpath( dirname( $path ) );
+		if ( false === $real_path ) {
+			\WP_CLI::error( 'Invalid export path. Please specify a valid directory.' );
+			return;
+		}
+
+		// Check for path traversal attempts
+		if ( false !== strpos( basename( $path ), '..' ) ) {
+			\WP_CLI::error( 'Path traversal not allowed in export path.' );
+			return;
+		}
+
 		$this->audit_logger->export( $path );
 		\WP_CLI::success( "Audit log exported to: {$path}" );
 	}
