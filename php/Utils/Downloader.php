@@ -52,6 +52,12 @@ class Downloader {
 	 * @return string|false Path to downloaded package or false on failure.
 	 */
 	public function download_package( $slug, $type ) {
+		// Validate slug to prevent path traversal and injection attacks
+		if ( ! $this->validate_slug( $slug ) ) {
+			\WP_CLI::error( 'Invalid package slug. Slug must contain only lowercase letters, numbers, and hyphens.' );
+			return false;
+		}
+
 		$download_url = $this->get_download_url( $slug, $type );
 
 		if ( ! $download_url ) {
@@ -60,12 +66,16 @@ class Downloader {
 
 		$zip_path = $this->temp_dir . '/' . $slug . '.zip';
 
-		// Download the package.
+		// Download the package with SSL verification.
 		$context = stream_context_create( array(
 			'http' => array(
 				'method'  => 'GET',
 				'timeout' => 120,
 				'user_agent' => 'WP-AI-Security/1.0',
+			),
+			'ssl' => array(
+				'verify_peer'      => true,
+				'verify_peer_name' => true,
 			),
 		) );
 
@@ -186,5 +196,74 @@ class Downloader {
 	 */
 	public function get_temp_dir() {
 		return $this->temp_dir;
+	}
+
+	/**
+	 * Validate package slug to prevent injection attacks.
+	 *
+	 * @param string $slug Package slug to validate.
+	 * @return bool True if valid, false otherwise.
+	 */
+	private function validate_slug( $slug ) {
+		// Allow URLs directly (user provided external source)
+		if ( preg_match( '/^https?:\/\//', $slug ) ) {
+			return $this->validate_url( $slug );
+		}
+
+		// WordPress slugs: lowercase letters, numbers, hyphens only
+		// 1-64 characters
+		return (bool) preg_match( '/^[a-z0-9][a-z0-9-]*[a-z0-9]$/', $slug );
+	}
+
+	/**
+	 * Validate URL to prevent SSRF attacks.
+	 *
+	 * @param string $url URL to validate.
+	 * @return bool True if valid, false otherwise.
+	 */
+	private function validate_url( $url ) {
+		$parsed = parse_url( $url );
+
+		// Only allow http and https
+		if ( ! isset( $parsed['scheme'] ) || ! in_array( $parsed['scheme'], array( 'http', 'https' ), true ) ) {
+			return false;
+		}
+
+		// Block localhost and private IP ranges
+		if ( isset( $parsed['host'] ) ) {
+			$host = strtolower( $parsed['host'] );
+			$blocked = array(
+				'localhost',
+				'127.0.0.1',
+				'::1',
+				'0.0.0.0',
+				'169.254.169.254', // AWS metadata
+			);
+
+			if ( in_array( $host, $blocked, true ) ) {
+				return false;
+			}
+
+			// Check for private IP ranges
+			$ip = gethostbyname( $host );
+			if ( $ip ) {
+				$long_ip = ip2long( $ip );
+				// 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+				if ( $long_ip ) {
+					$private_ranges = array(
+						array( ip2long( '10.0.0.0' ), ip2long( '10.255.255.255' ) ),
+						array( ip2long( '172.16.0.0' ), ip2long( '172.31.255.255' ) ),
+						array( ip2long( '192.168.0.0' ), ip2long( '192.168.255.255' ) ),
+					);
+					foreach ( $private_ranges as $range ) {
+						if ( $long_ip >= $range[0] && $long_ip <= $range[1] ) {
+							return false;
+						}
+					}
+				}
+			}
+		}
+
+		return true;
 	}
 }

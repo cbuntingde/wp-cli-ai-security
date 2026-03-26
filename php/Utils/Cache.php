@@ -38,7 +38,7 @@ class Cache {
 		$this->cache_dir = $config->get( 'cache_dir', sys_get_temp_dir() . '/wp-ai-security' );
 
 		if ( ! is_dir( $this->cache_dir ) ) {
-			mkdir( $this->cache_dir, 0755, true );
+			mkdir( $this->cache_dir, 0700, true );
 		}
 	}
 

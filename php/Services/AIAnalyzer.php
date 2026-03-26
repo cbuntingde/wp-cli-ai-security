@@ -151,7 +151,13 @@ class AIAnalyzer {
 		$this->write_semgrep_rules( $temp_rules );
 
 		$output_file = sys_get_temp_dir() . '/semgrep-output.json';
-		$command     = "semgrep --config={$temp_rules} --json --output={$output_file} {$path} 2>/dev/null";
+
+		// Sanitize path to prevent command injection (ASI05)
+		$safe_path = escapeshellarg( $path );
+		$safe_rules = escapeshellarg( $temp_rules );
+		$safe_output = escapeshellarg( $output_file );
+
+		$command = "semgrep --config={$safe_rules} --json --output={$safe_output} {$safe_path} 2>/dev/null";
 
 		exec( $command, $output, $return_code );
 
@@ -311,6 +317,10 @@ class AIAnalyzer {
 				),
 				'content' => json_encode( $data ),
 				'timeout' => 60,
+			),
+			'ssl' => array(
+				'verify_peer'      => true,
+				'verify_peer_name' => true,
 			),
 		) );
 
