@@ -145,18 +145,12 @@ class ThemeScan extends BaseCommand {
 			$install_assoc['activate'] = true;
 		}
 
-		// Show what would be run (prototype).
-		$cmd = 'wp theme install ' . implode( ' ', array_map( 'escapeshellarg', $install_args ) );
-		foreach ( $install_assoc as $key => $value ) {
-			if ( true === $value ) {
-				$cmd .= ' --' . $key;
-			}
+		try {
+			\WP_CLI::run_command( $install_args, $install_assoc );
+			\WP_CLI::success( "Theme {$slug} installed successfully." );
+		} catch ( \Exception $e ) {
+			\WP_CLI::error( "Failed to install theme: " . $e->getMessage() );
 		}
-
-		\WP_CLI::line( "Running: {$cmd}" );
-		\WP_CLI::line( '' );
-		\WP_CLI::success( 'Theme installation would proceed here.' );
-		\WP_CLI::line( 'Note: This is a prototype. Full implementation would call wp theme install.' );
 	}
 
 	/**

@@ -145,42 +145,12 @@ class PluginScan extends BaseCommand {
 			$install_assoc['activate'] = true;
 		}
 
-		// Call the built-in wp plugin install command.
-		// We need to re-invoke WP-CLI.
-		$this->run_wpcli_command( 'plugin install', $install_args, $install_assoc );
-	}
-
-	/**
-	 * Run the built-in WP-CLI command.
-	 *
-	 * @param string $command    Command to run.
-	 * @param array  $args       Positional arguments.
-	 * @param array  $assoc_args Associative arguments.
-	 */
-	private function run_wpcli_command( $command, $args, $assoc_args ) {
-		// Get the global WP_CLI instance and run the command.
-		// This is a bit of a hack since we can't easily call other commands.
-		// In production, you'd want to use WP_CLI::run_command().
-
-		$cmd = 'wp ' . $command;
-		foreach ( $args as $arg ) {
-			$cmd .= ' ' . escapeshellarg( $arg );
+		try {
+			\WP_CLI::run_command( $install_args, $install_assoc );
+			\WP_CLI::success( "Plugin {$slug} installed successfully." );
+		} catch ( \Exception $e ) {
+			\WP_CLI::error( "Failed to install plugin: " . $e->getMessage() );
 		}
-		foreach ( $assoc_args as $key => $value ) {
-			if ( true === $value ) {
-				$cmd .= ' --' . $key;
-			} else {
-				$cmd .= ' --' . $key . '=' . escapeshellarg( $value );
-			}
-		}
-
-		\WP_CLI::line( "Running: {$cmd}" );
-
-		// For now, show the command that would be run.
-		// In a full implementation, you'd execute this via proc_open or similar.
-		\WP_CLI::line( '' );
-		\WP_CLI::success( 'Plugin installation would proceed here.' );
-		\WP_CLI::line( 'Note: This is a prototype. Full implementation would call wp plugin install.' );
 	}
 
 	/**

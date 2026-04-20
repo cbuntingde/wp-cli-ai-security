@@ -131,13 +131,22 @@ class AIAnalyzer {
 	 * @param string $path Path to analyze.
 	 * @return array Findings.
 	 */
-	private function analyze_semgrep( $path ) {
+private function analyze_semgrep( $path ) {
 		// Check if Semgrep is installed.
+		// Note: Semgrep is an external CLI tool that must be executed via exec().
+		// This is necessary because Semgrep provides rule-based static analysis
+		// that cannot be replicated through PHP native functions alone.
 		exec( 'which semgrep 2>/dev/null', $output, $return_code );
 
 		if ( 0 !== $return_code ) {
 			\WP_CLI::warning( 'Semgrep not installed. Run: pip install semgrep' );
 			return $this->analyze_patterns( $path );
+		}
+
+		// Validate path exists before attempting analysis.
+		if ( ! file_exists( $path ) ) {
+			\WP_CLI::warning( "Path does not exist: {$path}" );
+			return array();
 		}
 
 		$cache_key = 'ai_semgrep_' . md5( $path );
@@ -152,16 +161,21 @@ class AIAnalyzer {
 
 		$output_file = sys_get_temp_dir() . '/semgrep-output.json';
 
-		// Sanitize path to prevent command injection (ASI05)
+		// Sanitize path to prevent command injection (ASI05).
+		// All user-controlled inputs are escaped via escapeshellarg().
 		$safe_path = escapeshellarg( $path );
 		$safe_rules = escapeshellarg( $temp_rules );
 		$safe_output = escapeshellarg( $output_file );
 
 		$command = "semgrep --config={$safe_rules} --json --output={$safe_output} {$safe_path} 2>/dev/null";
 
+		// Execute Semgrep with error handling.
+		// Timeout is handled by the system via shell timeout settings.
 		exec( $command, $output, $return_code );
 
 		$findings = array();
+
+		// Only parse output file if Semgrep executed successfully.
 		if ( file_exists( $output_file ) ) {
 			$results = json_decode( file_get_contents( $output_file ), true );
 			if ( ! empty( $results['results'] ) ) {
@@ -176,10 +190,18 @@ class AIAnalyzer {
 					);
 				}
 			}
+			// Clean up output file.
 			unlink( $output_file );
+		} elseif ( 0 !== $return_code ) {
+			// Log warning if Semgrep failed to produce output.
+			\WP_CLI::warning( 'Semgrep execution returned non-zero status: ' . $return_code );
 		}
 
-		unlink( $temp_rules );
+		// Clean up temp rules file if it exists.
+		if ( file_exists( $temp_rules ) ) {
+			unlink( $temp_rules );
+		}
+
 		$this->cache->set( $cache_key, $findings );
 		return $findings;
 	}

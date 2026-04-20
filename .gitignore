@@ -2,10 +2,14 @@
 /vendor/
 /composer.lock
 
+# Configuration (user-specific, contains API keys)
+/config.json
+
 # Cache and temp files
 *.cache
 *.log
 .phpunit.cache/
+.phpunit.result.cache
 
 # IDE
 .idea/
@@ -27,3 +31,7 @@ build/
 # Test coverage
 .coverage
 htmlcov/
+
+# Security scan outputs (can contain sensitive info)
+/scan-results/
+/security-reports/

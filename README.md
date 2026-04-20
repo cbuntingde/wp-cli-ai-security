@@ -329,6 +329,10 @@ Error: Installation blocked due to security issues. Use --skip-scan to bypass (n
 - **Downloaded packages** are stored in temporary directories and cleaned up after scanning
 - **Audit logs** are stored locally and can be exported for compliance
 - **No data is sent to external services** except for API queries to vulnerability databases and AI providers
+- **Directory permissions** are set to 0700 (owner-only) for sensitive directories
+- **SSRF protection** blocks requests to localhost and private IP ranges
+- **Input validation** on all slugs and URLs before download
+- **Exception hierarchy** provides granular error handling without exposing internal details
 
 ## Troubleshooting
 

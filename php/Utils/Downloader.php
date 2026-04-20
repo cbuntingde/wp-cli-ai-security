@@ -40,7 +40,7 @@ class Downloader {
 		$this->temp_dir = $config->get( 'cache_dir', sys_get_temp_dir() ) . '/wp-ai-security/downloads';
 
 		if ( ! is_dir( $this->temp_dir ) ) {
-			mkdir( $this->temp_dir, 0755, true );
+			mkdir( $this->temp_dir, 0700, true );
 		}
 	}
 
@@ -95,7 +95,7 @@ class Downloader {
 			$this->recursive_delete( $extract_dir );
 		}
 
-		mkdir( $extract_dir, 0755, true );
+		mkdir( $extract_dir, 0700, true );
 
 		$zip = new \ZipArchive();
 		if ( true !== $zip->open( $zip_path ) ) {
@@ -186,7 +186,7 @@ class Downloader {
 	 */
 	public function cleanup_all() {
 		$this->recursive_delete( $this->temp_dir );
-		mkdir( $this->temp_dir, 0755, true );
+		mkdir( $this->temp_dir, 0700, true );
 	}
 
 	/**
