@@ -1,11 +1,6 @@
 # WP-CLI AI Security
 > Enterprise-grade AI-powered security scanning for WordPress operations.
 
-[![Version](https://img.shields.io/packagist/v/wp-ai-security/wp-cli-ai-security.svg)](https://packagist.org/packages/wp-ai-security/wp-cli-ai-security)
-[![PHP Version](https://img.shields.io/packagist/php-v/wp-ai-security/wp-cli-ai-security.svg)](https://packagist.org/packages/wp-ai-security/wp-cli-ai-security)
-[![License](https://img.shields.io/packagist/l/wp-ai-security/wp-cli-ai-security.svg)](LICENSE)
-[![WP-CLI Version](https://img.shields.io/packagist/dependency/wp-cli/wp-cli.svg)](https://make.wordpress.org/cli/)
-
 ---
 
 ## Executive Summary
