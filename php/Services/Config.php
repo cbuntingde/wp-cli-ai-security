@@ -35,7 +35,7 @@ class Config {
 		'api_provider'     => 'wpscan',  // wpscan, patchstack, or nvd
 		'api_key'          => '',
 		'ai_enabled'       => false,
-		'ai_provider'      => 'semgrep', // semgrep, openai, or anthropic
+		'ai_provider'      => 'semgrep', // semgrep, anthropic, or patterns
 		'ai_api_key'       => '',
 		'cache_dir'        => '',
 		'cache_ttl'        => 86400,     // 24 hours in seconds
@@ -150,7 +150,7 @@ class Config {
 			return 0 === $return_code;
 		}
 
-		// For OpenAI/Anthropic, check for API key.
+		// For Anthropic/API-based providers, check for API key.
 		return ! empty( $this->get( 'ai_api_key' ) );
 	}
 

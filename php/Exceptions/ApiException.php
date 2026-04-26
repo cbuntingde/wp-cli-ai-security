@@ -5,11 +5,6 @@
  * @package WPAISecurity\Exceptions
  */
 
-// Exit if accessed directly.
-if ( ! defined( 'ABSPATH' ) ) {
-	exit;
-}
-
 namespace WPAISecurity\Exceptions;
 
 /**

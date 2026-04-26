@@ -1,5 +1,5 @@
 # WP-CLI AI Security
-> Enterprise-grade AI-powered security scanning for WordPress operations.
+> Enterprise-grade AI-powered security scanning for WordPress operations — powered by [Anthropic Claude](https://anthropic.com).
 
 ---
 
@@ -69,7 +69,7 @@ For SOC and incident response teams:
 │            │                          │                          │
 │  ┌─────────▼─────────┐   ┌────────────▼────────────┐             │
 │  │ Vulnerability API │   │    AI Analysis Engine   │             │
-│  │  (WPScan/NVD/...) │   │ (Semgrep / LLM / Rules) │             │
+│  │  (WPScan/NVD/...) │   │ (Semgrep / Claude / Rules) │             │
 │  └───────────────────┘   └─────────────────────────┘             │
 └───────────────────────────────────────────────────────────────────┘
 ```
@@ -229,9 +229,11 @@ wp ai-security config set cache_ttl 21600
 
 # Compliance
 wp ai-security config set log_audits true
-wp ai-security config set log_hashes true
 wp ai-security config set api_provider wpscan
-wp ai-security config set ai_provider semgrep
+
+# AI Analysis (choose one)
+wp ai-security config set ai_provider semgrep       # Local (no API key needed)
+# wp ai-security config set ai_provider anthropic   # Claude API (requires ai_api_key)
 ```
 
 ### 7.2 Hardening Controls
@@ -261,8 +263,8 @@ wp ai-security config set ai_provider semgrep
 | **Pre-install Scanning** | Download and analyze packages before installation |
 | **Post-install Auditing** | Scan all installed plugins and themes |
 | **Vulnerability Detection** | Check against CVE databases (WPScan, Patchstack, NVD) |
-| **AI Code Analysis** | Detect suspicious patterns, backdoors, malware |
-| **Multiple AI Providers** | Semgrep (local), OpenAI API, or built-in pattern matching |
+| **AI Code Analysis** | Semgrep (local), Anthropic Claude Sonnet API, or built-in pattern matching |
+| **Claude Deep Analysis** | Semantic code review of suspicious files with retry/backoff handling |
 | **Caching** | Avoid repeated scans with intelligent caching |
 | **Audit Logging** | Maintain compliance-ready audit trails |
 | **Strict Mode** | Optionally block installations with security issues |
@@ -330,9 +332,9 @@ wp ai-security config set --key=ai_enabled --value=true
 # Local Semgrep (Recommended for air-gapped environments)
 wp ai-security config set --key=ai_provider --value=semgrep
 
-# OpenAI API
-wp ai-security config set --key=ai_provider --value=openai
-wp ai-security config set --key=ai_api_key --value=YOUR_OPENAI_API_KEY
+# Anthropic Claude API
+wp ai-security config set --key=ai_provider --value=anthropic
+wp ai-security config set --key=ai_api_key --value=YOUR_ANTHROPIC_API_KEY
 ```
 
 ---
@@ -461,8 +463,8 @@ wp ai-security cache clear --all
 | Provider | Cost | Local Execution | Description |
 |----------|------|-----------------|-------------|
 | [Semgrep](https://semgrep.dev) | Free | Yes | Static analysis engine, rule-based |
-| OpenAI | Pay-per-use | No | GPT-4 for semantic code analysis |
-| Pattern Matching | Free | Yes | Built-in rules, no external dependencies |
+| [Anthropic Claude](https://anthropic.com) | Pay-per-use | No | Claude Sonnet for semantic code analysis; includes automatic retry with exponential backoff (429/network errors) |
+| Pattern Matching | Free | Yes | 10 built-in PHP security rules (eval, SQLi, SSRF, file ops, obfuscation, etc.) |
 
 ---
 
@@ -471,9 +473,13 @@ wp ai-security cache clear --all
 | Error Condition | Resolution |
 |-----------------|------------|
 | Semgrep not installed | `pip install semgrep` |
-| API request failed | Verify API key, check rate limits |
+| Anthropic API request failed | Verify `ai_api_key` is set; check network/firewall allows `api.anthropic.com:443` |
+| Anthropic API 401/403 | API key is invalid or expired — run `wp ai-security config set --key=ai_api_key --value=YOUR_KEY` |
+| Anthropic API rate limited (429) | Automatically retried with exponential backoff (3 attempts) |
+| Vulnerability API request failed | Verify `api_key`, check rate limits |
 | Failed to download package | Validate slug, check network connectivity |
-| Permission errors | Verify ownership and permissions on ~/.wp-ai-security |
+| Permission errors | Verify ownership and permissions on `~/.wp-ai-security` |
+| Unknown AI provider | Valid providers: `semgrep`, `anthropic`, `patterns` |
 
 ---
 

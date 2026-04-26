@@ -10,6 +10,7 @@
 
 namespace WPAISecurity\Services;
 
+use WPAISecurity\Exceptions\ApiException;
 use WPAISecurity\Utils\Cache;
 
 /**
@@ -17,82 +18,88 @@ use WPAISecurity\Utils\Cache;
  */
 class AIAnalyzer {
 
-	/**
-	 * Configuration service.
-	 *
-	 * @var Config
-	 */
-	private $config;
+	private const ANTHROPIC_API_URL  = 'https://api.anthropic.com/v1/messages';
+	private const ANTHROPIC_MODEL    = 'claude-sonnet-4-20250514';
+	private const ANTHROPIC_VERSION  = '2023-06-01';
+	private const ANTHROPIC_TIMEOUT  = 120;
+	private const MAX_RETRIES        = 3;
+	private const RETRY_BASE_DELAY_MS = 1000;
+	private const CODE_CHUNK_LENGTH  = 12000;
 
-	/**
-	 * Cache service.
-	 *
-	 * @var Cache
-	 */
+	private $config;
 	private $cache;
 
-	/**
-	 * WordPress security patterns to check.
-	 *
-	 * @var array
-	 */
 	private $wp_security_rules = array(
 		array(
 			'id'       => 'wp-001',
-			'pattern'  => 'eval\s*\(',
-			'title'    => 'Use of eval() detected',
-			'severity' => 'high',
-			'desc'     => 'eval() is dangerous and can lead to code injection.',
+			'pattern'  => '(?:eval|assert)\s*\(',
+			'title'    => 'Use of eval() or assert() detected',
+			'severity' => 'critical',
+			'desc'     => 'Code execution functions that can lead to RCE.',
 		),
 		array(
 			'id'       => 'wp-002',
 			'pattern'  => 'base64_decode\s*\(',
 			'title'    => 'Base64 decode detected',
 			'severity' => 'medium',
-			'desc'     => 'Often used to obfuscate malicious code.',
+			'desc'     => 'Often used to obfuscate malicious code, especially when combined with eval.',
 		),
 		array(
 			'id'       => 'wp-003',
-			'pattern'  => 'shell_exec\s*\(|exec\s*\(|passthru\s*\(|system\s*\(',
+			'pattern'  => '(?:shell_exec|exec|passthru|system|popen|proc_open|pcntl_exec)\s*\(',
 			'title'    => 'Shell command execution detected',
-			'severity' => 'high',
-			'desc'     => 'Potential command injection vulnerability.',
+			'severity' => 'critical',
+			'desc'     => 'Command execution functions present a critical RCE risk.',
 		),
 		array(
 			'id'       => 'wp-004',
-			'pattern'  => '\$_GET\s*\[|\$_POST\s*\[|\$_REQUEST\s*\[',
-			'title'    => 'Raw user input access',
+			'pattern'  => '(?<!\w)\$_GET\s*\[|\$_POST\s*\[|\$_REQUEST\s*\[|\$_SERVER\s*\[\s*[\'"]REQUEST_METHOD',
+			'title'    => 'Raw superglobal input access',
 			'severity' => 'medium',
-			'desc'     => 'User input should be sanitized before use.',
+			'desc'     => 'Superglobal input should be sanitized and validated before use.',
 		),
 		array(
 			'id'       => 'wp-005',
-			'pattern'  => 'mysql_\$|mysqli_\$|wpdb->prepare.*%',
+			'pattern'  => 'mysql_\w+\s*\(|mysqli_\w+\s*\(|wpdb->query|wpdb->get_var|wpdb->get_row',
 			'title'    => 'Potential SQL injection risk',
 			'severity' => 'high',
-			'desc'     => 'SQL queries should use prepared statements.',
+			'desc'     => 'Direct database queries should use wpdb->prepare() with parameterized queries.',
 		),
 		array(
 			'id'       => 'wp-006',
-			'pattern'  => 'file_get_contents\s*\(\s*\$_|file_put_contents\s*\(\s*\$_|fopen\s*\(\s*\$_',
+			'pattern'  => '(?:file_get_contents|file_put_contents|fopen|fwrite|fputs|move_uploaded_file|copy|rename|unlink|chmod)\s*\(\s*(?:\$_|\$[\w]+)',
 			'severity' => 'high',
-			'title'    => 'File operations with user input',
-			'desc'     => 'Path traversal or arbitrary file read/write risk.',
+			'title'    => 'File operations with dynamic/user input',
+			'desc'     => 'Path traversal or arbitrary file read/write risk from unsanitized input.',
 		),
 		array(
 			'id'       => 'wp-007',
-			'pattern'  => 'wp_ajax_\$|wp_ajax_nopriv_\$',
-			'title'    => 'AJAX handler without nonce check',
+			'pattern'  => 'add_action\s*\(\s*[\'"]wp_ajax_|add_action\s*\(\s*[\'"]wp_ajax_nopriv_',
+			'title'    => 'AJAX handler registered without visible nonce check',
 			'severity' => 'medium',
-			'desc'     => 'AJAX actions should verify nonces for security.',
+			'desc'     => 'AJAX actions should verify nonces via check_ajax_referer() or check_admin_referer().',
 		),
 		array(
 			'id'       => 'wp-008',
-			'pattern'  => 'create_function\s*\(|preg_replace.*\/e',
+			'pattern'  => '(?:create_function|preg_replace\s*\(.*\/[eems]*e)',
 			'deprecated' => true,
 			'title'    => 'Deprecated dangerous functions',
-			'severity' => 'medium',
-			'desc'     => 'These functions are deprecated and potentially dangerous.',
+			'severity' => 'high',
+			'desc'     => 'create_function() and /e modifier in preg_replace are deprecated and enable code injection.',
+		),
+		array(
+			'id'       => 'wp-009',
+			'pattern'  => '(?:gzinflate|str_rot13|gzuncompress|gzdecode)\s*\(\s*(?:base64_decode|\$)',
+			'title'    => 'Obfuscated code pattern detected',
+			'severity' => 'critical',
+			'desc'     => 'Nested decoding functions are a strong indicator of obfuscated malware.',
+		),
+		array(
+			'id'       => 'wp-010',
+			'pattern'  => '\$\s*_\s*=\s*|\(\s*function\s*\(\s*\)\s*use\s*\(|preg_replace\s*\(\s*(?:[\'"])(.)\1[^es]*[es]',
+			'title'    => 'Suspicious obfuscation or callback pattern',
+			'severity' => 'high',
+			'desc'     => 'Common malware patterns using variable variables or obfuscated callbacks.',
 		),
 	);
 
@@ -114,14 +121,21 @@ class AIAnalyzer {
 	 * @return array List of findings.
 	 */
 	public function analyze( $path ) {
+		if ( ! is_dir( $path ) && ! is_file( $path ) ) {
+			\WP_CLI::warning( "Analysis path does not exist: {$path}" );
+			return array();
+		}
+
 		$provider = $this->config->get( 'ai_provider', 'semgrep' );
 		$method   = 'analyze_' . $provider;
 
 		if ( method_exists( $this, $method ) ) {
+			\WP_CLI::debug( "Running analysis with provider: {$provider}", 'wp-ai-security' );
 			return $this->$method( $path );
 		}
 
-		// Fallback to pattern matching.
+		\WP_CLI::warning( "Unknown AI provider '{$provider}', falling back to pattern matching." );
+
 		return $this->analyze_patterns( $path );
 	}
 
@@ -248,97 +262,156 @@ private function analyze_semgrep( $path ) {
 	}
 
 	/**
-	 * Analyze using OpenAI API.
+	 * Analyze using Anthropic Claude API.
 	 *
 	 * @param string $path Path to analyze.
 	 * @return array Findings.
 	 */
-	private function analyze_openai( $path ) {
+	private function analyze_anthropic( $path ) {
 		$api_key = $this->config->get_ai_api_key();
 
 		if ( empty( $api_key ) ) {
-			\WP_CLI::warning( 'No OpenAI API key configured. Using pattern matching.' );
+			\WP_CLI::warning( 'No Anthropic API key configured. Using pattern matching.' );
 			return $this->analyze_patterns( $path );
 		}
 
-		// First run pattern matching for quick results.
 		$pattern_findings = $this->analyze_patterns( $path );
 
-		// Then use OpenAI for deeper analysis on suspicious files.
 		$suspicious_files = array();
 		foreach ( $pattern_findings as $finding ) {
-			if ( in_array( $finding['severity'], array( 'high', 'critical' ) ) ) {
+			if ( in_array( $finding['severity'], array( 'high', 'critical' ), true ) ) {
 				$suspicious_files[] = $finding['file'];
 			}
 		}
 
 		if ( empty( $suspicious_files ) ) {
+			\WP_CLI::debug( 'No suspicious files found by pattern matching; skipping AI analysis.', 'wp-ai-security' );
 			return $pattern_findings;
 		}
 
-		// Get first suspicious file for AI analysis.
-		$first_file = $this->find_php_files( $path )[0] ?? '';
-		if ( empty( $first_file ) ) {
+		$php_files = $this->find_php_files( $path );
+		if ( empty( $php_files ) ) {
 			return $pattern_findings;
 		}
 
-		$code = substr( file_get_contents( $first_file ), 0, 8000 ); // Limit to first 8000 chars.
+		$ai_findings = array();
+		$files_analyzed = 0;
+		$max_ai_files   = min( 3, count( $php_files ) );
 
-		$prompt = "Analyze this WordPress plugin code for security vulnerabilities, malware, backdoors, and suspicious patterns. Focus on:\n" .
-			"- SQL injection vulnerabilities\n" .
-			"- XSS (cross-site scripting) vulnerabilities\n" .
-			"- CSRF vulnerabilities\n" .
-			"- Remote code execution risks\n" .
-			"- Obfuscated code\n" .
-			"- Backdoors or malicious code\n" .
-			"- Authentication bypasses\n\n" .
-			"Code:\n```php\n{$code}\n```\n\n" .
-			"Return a JSON array of findings, each with: title, severity (low/medium/high/critical), description, and file.";
+		foreach ( $php_files as $file_path ) {
+			if ( $files_analyzed >= $max_ai_files ) {
+				break;
+			}
 
-		$response = $this->call_openai_api( $api_key, $prompt );
+			$basename = basename( $file_path );
 
-		if ( ! empty( $response ) ) {
-			// Merge AI findings with pattern findings.
-			return array_merge( $pattern_findings, $response );
+			$is_suspicious = false;
+			foreach ( $suspicious_files as $sf ) {
+				if ( $sf === $basename || strpos( $basename, $sf ) !== false ) {
+					$is_suspicious = true;
+					break;
+				}
+			}
+
+			if ( ! $is_suspicious ) {
+				continue;
+			}
+
+			$code = file_get_contents( $file_path );
+
+			if ( strlen( $code ) > self::CODE_CHUNK_LENGTH ) {
+				$code = substr( $code, 0, self::CODE_CHUNK_LENGTH );
+				\WP_CLI::debug( "Truncated {$basename} to " . self::CODE_CHUNK_LENGTH . ' chars for AI analysis.', 'wp-ai-security' );
+			}
+
+			$prompt = $this->build_analysis_prompt( $basename, $code );
+			$response = $this->call_anthropic_api( $api_key, $prompt );
+
+			if ( ! empty( $response ) && is_array( $response ) ) {
+				foreach ( $response as $finding ) {
+					if ( ! isset( $finding['file'] ) ) {
+						$finding['file'] = $basename;
+					}
+					$ai_findings[] = $finding;
+				}
+				$files_analyzed++;
+			}
+		}
+
+		if ( ! empty( $ai_findings ) ) {
+			\WP_CLI::debug( 'Merging ' . count( $ai_findings ) . ' AI findings with ' . count( $pattern_findings ) . ' pattern findings.', 'wp-ai-security' );
+			return array_merge( $pattern_findings, $ai_findings );
 		}
 
 		return $pattern_findings;
 	}
 
 	/**
-	 * Call OpenAI API.
+	 * Build the analysis prompt for Anthropic Claude.
 	 *
-	 * @param string $api_key API key.
-	 * @param string $prompt  Prompt to send.
-	 * @return array Response.
+	 * @param string $filename Source file name.
+	 * @param string $code     Source code content.
+	 * @return string
 	 */
-	private function call_openai_api( $api_key, $prompt ) {
-		$url = 'https://api.openai.com/v1/chat/completions';
+	private function build_analysis_prompt( $filename, $code ) {
+		$prompt = "Analyze this WordPress {$filename} code for security vulnerabilities, malware, backdoors, and suspicious patterns.\n\n" .
+			"Focus on:\n" .
+			"- SQL injection vulnerabilities\n" .
+			"- XSS (cross-site scripting) vulnerabilities\n" .
+			"- CSRF / missing nonce checks\n" .
+			"- Remote code execution risks\n" .
+			"- Obfuscated or encoded code\n" .
+			"- Backdoors or malicious code\n" .
+			"- Authentication bypasses\n" .
+			"- Privilege escalation\n" .
+			"- Server-side request forgery (SSRF)\n" .
+			"- File inclusion or path traversal\n\n" .
+			"Code:\n```php\n{$code}\n```\n\n" .
+			"Return findings as a JSON array of objects, each with these exact keys:\n" .
+			"- title (string): concise finding name\n" .
+			"- severity (string): one of low, medium, high, critical\n" .
+			"- description (string): detailed explanation of the vulnerability\n" .
+			"- file (string): {$filename}\n" .
+			"If no vulnerabilities are found, return an empty array []. Do not include any text outside the JSON array.";
 
-		$data = array(
-			'model'       => 'gpt-4o-mini',
+		return $prompt;
+	}
+
+	/**
+	 * Call Anthropic Claude API with retry and exponential backoff.
+	 *
+	 * @param string $api_key  Anthropic API key.
+	 * @param string $prompt   Prompt to send.
+	 * @param int    $retries  Remaining retry count.
+	 * @return array Parsed findings from response.
+	 */
+	private function call_anthropic_api( $api_key, $prompt, $retries = self::MAX_RETRIES ) {
+		$body = array(
+			'model'       => self::ANTHROPIC_MODEL,
+			'max_tokens'  => 4096,
+			'temperature' => 0.2,
+			'system'      => 'You are a security expert analyzing WordPress PHP code for vulnerabilities. Return only valid JSON arrays.',
 			'messages'    => array(
-				array(
-					'role'    => 'system',
-					'content' => 'You are a security expert analyzing WordPress plugins for vulnerabilities.',
-				),
 				array(
 					'role'    => 'user',
 					'content' => $prompt,
 				),
 			),
-			'temperature' => 0.2,
+		);
+
+		$headers = array(
+			'Content-Type: application/json',
+			'x-api-key: ' . $api_key,
+			'anthropic-version: ' . self::ANTHROPIC_VERSION,
 		);
 
 		$context = stream_context_create( array(
 			'http' => array(
 				'method'  => 'POST',
-				'header'  => array(
-					'Content-Type: application/json',
-					'Authorization: Bearer ' . $api_key,
-				),
-				'content' => json_encode( $data ),
-				'timeout' => 60,
+				'header'  => $headers,
+				'content' => json_encode( $body ),
+				'timeout' => self::ANTHROPIC_TIMEOUT,
+				'ignore_errors' => true,
 			),
 			'ssl' => array(
 				'verify_peer'      => true,
@@ -346,18 +419,65 @@ private function analyze_semgrep( $path ) {
 			),
 		) );
 
-		$response = @file_get_contents( $url, false, $context );
+		$response = @file_get_contents( self::ANTHROPIC_API_URL, false, $context );
 
 		if ( false === $response ) {
+			$error = error_get_last();
+			$error_message = is_array( $error ) ? ( $error['message'] ?? 'Unknown error' ) : 'Unknown error';
+
+			if ( $retries > 1 ) {
+				$delay_ms = self::RETRY_BASE_DELAY_MS * pow( 2, self::MAX_RETRIES - $retries );
+				\WP_CLI::debug( "Anthropic API error: {$error_message}. Retrying in {$delay_ms}ms... ({$retries} retries left)", 'wp-ai-security' );
+				usleep( $delay_ms * 1000 );
+				return $this->call_anthropic_api( $api_key, $prompt, $retries - 1 );
+			}
+
+			\WP_CLI::warning( "Anthropic API request failed after " . self::MAX_RETRIES . " attempts: {$error_message}" );
+			return array();
+		}
+
+		$http_response_header_array = $http_response_header ?? array();
+		$http_code = 0;
+		foreach ( $http_response_header_array as $header ) {
+			if ( preg_match( '/^HTTP\/\d\.\d\s+(\d+)/', $header, $matches ) ) {
+				$http_code = (int) $matches[1];
+				break;
+			}
+		}
+
+		if ( $http_code >= 400 ) {
+			if ( 429 === $http_code && $retries > 1 ) {
+				$delay_ms = self::RETRY_BASE_DELAY_MS * pow( 2, self::MAX_RETRIES - $retries );
+				\WP_CLI::debug( "Anthropic API rate limited (429). Retrying in {$delay_ms}ms... ({$retries} retries left)", 'wp-ai-security' );
+				usleep( $delay_ms * 1000 );
+				return $this->call_anthropic_api( $api_key, $prompt, $retries - 1 );
+			}
+
+			$response_body = json_decode( $response, true );
+			$error_detail = $response_body['error']['message'] ?? "HTTP {$http_code}";
+			\WP_CLI::warning( "Anthropic API returned {$http_code}: {$error_detail}" );
+
+			if ( in_array( $http_code, array( 401, 403 ), true ) ) {
+				\WP_CLI::warning( 'Your Anthropic API key appears to be invalid or unauthorized. Run: wp ai-security config set --key=ai_api_key --value=YOUR_KEY' );
+			}
+
 			return array();
 		}
 
 		$result = json_decode( $response, true );
-		$content = $result['choices'][0]['message']['content'] ?? '';
 
-		// Try to extract JSON from response.
-		if ( preg_match( '/\[[\s\S]*\]/', $content, $matches ) ) {
-			return json_decode( $matches[0], true ) ?: array();
+		if ( ! is_array( $result ) || ! isset( $result['content'][0]['text'] ) ) {
+			\WP_CLI::warning( 'Unexpected Anthropic API response format.' );
+			return array();
+		}
+
+		$content = $result['content'][0]['text'];
+
+		if ( preg_match( '/\[[\s\S]*?\]/', $content, $matches ) ) {
+			$decoded = json_decode( $matches[0], true );
+			if ( is_array( $decoded ) ) {
+				return $decoded;
+			}
 		}
 
 		return array();
@@ -374,27 +494,37 @@ private function analyze_semgrep( $path ) {
 		);
 
 		foreach ( $this->wp_security_rules as $rule ) {
+			$severity_map = array(
+				'critical' => 'ERROR',
+				'high'     => 'ERROR',
+				'medium'   => 'WARNING',
+				'low'      => 'INFO',
+			);
+
+			$semgrep_severity = $severity_map[ $rule['severity'] ] ?? 'WARNING';
+
 			$rules['rules'][] = array(
-				'id'     => $rule['id'],
-				'pattern' => $rule['pattern'],
-				'message' => $rule['desc'],
-				'severity' => 'WARNING',
+				'id'       => $rule['id'],
+				'pattern'  => $rule['pattern'],
+				'message'  => $rule['title'] . ': ' . $rule['desc'],
+				'severity' => $semgrep_severity,
 				'languages' => array( 'php' ),
 				'metadata'  => array(
-					'cwe'  => $rule['title'],
+					'cwe'   => $rule['title'],
 					'owasp' => 'A1:2017 - Injection',
 				),
 			);
 		}
 
-		// Convert to YAML-like format for Semgrep.
+		// Generate valid Semgrep YAML rules file.
 		$yaml = "rules:\n";
 		foreach ( $rules['rules'] as $rule ) {
 			$yaml .= "  - id: {$rule['id']}\n";
-			$yaml .= "    pattern: \$X = {$rule['pattern']}\n";
+			$yaml .= "    pattern: {$rule['pattern']}\n";
 			$yaml .= "    message: {$rule['message']}\n";
-			$yaml .= "    severity: WARNING\n";
-			$yaml .= "    languages:\n      - php\n";
+			$yaml .= "    severity: {$rule['severity']}\n";
+			$yaml .= "    languages:\n";
+			$yaml .= "      - php\n";
 		}
 
 		file_put_contents( $path, $yaml );
@@ -442,6 +572,6 @@ private function analyze_semgrep( $path ) {
 	 * @return array
 	 */
 	public function get_providers() {
-		return array( 'semgrep', 'openai', 'patterns' );
+		return array( 'semgrep', 'anthropic', 'patterns' );
 	}
 }
